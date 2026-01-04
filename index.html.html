@@ -49,7 +49,7 @@ td{border-bottom:1px solid #ccc;padding:6px}
 
 <body>
 
-<header>&copy; 2026 Giovanni Cerbai – Tutti i diritti riservati</header>
+<header>&copy; 2026 Giovanni Cerbai â€“ Tutti i diritti riservati</header>
 
 <div class="container" id="home">
 <h1>NOLUCK POKER</h1>
@@ -85,7 +85,7 @@ Raise:
 <button onclick="chg(-500)">&minus;</button>
 <span id="raise">1000</span>
 <button onclick="chg(500)">+</button>
-<div style="font-size:14px">(min 1000 – max 5000)</div>
+<div style="font-size:14px">(min 1000 â€“ max 5000)</div>
 </div>
 
 <button onclick="act('fold')">Fold</button>
@@ -192,13 +192,13 @@ if(t==="fold"){ score-=pot; finish("Hai foldato"); return; }
 let equity = evalHand(bc.concat(board))/9;
 let cost = raise;
 let odds = cost/(pot+cost);
-let botFold = equity < odds * 0.8; // Cambiato da 0.9 a 0.8 per rendere il bot più aggressivo
+let botFold = equity < odds * 0.8; // Cambiato da 0.9 a 0.8 per rendere il bot piÃ¹ aggressivo
 
 pot+=raise;
 
 if(botFold){
     // Decisione del bot se foldare
-    if (Math.random() > 0.5) { // 50% di probabilità di foldare anche se ha una mano decente
+    if (Math.random() > 0.5) { // 50% di probabilitÃ  di foldare anche se ha una mano decente
         score += pot;
         finish("BOT folda");
         return;
