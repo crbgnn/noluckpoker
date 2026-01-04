@@ -38,12 +38,20 @@ border:none;
 border-radius:6px;
 background:#d4af37;
 color:#222;
+cursor:pointer;
+transition:background 0.3s;
+}
+button:hover{
+background:#e6c052;
 }
 .cards{font-size:28px;margin:8px}
 .score{font-size:20px;margin:8px}
-table{width:100%;border-collapse:collapse}
-td{border-bottom:1px solid #ccc;padding:6px}
+table{width:100%;border-collapse:collapse;margin:10px auto;max-width:500px;background:rgba(0,0,0,0.1);border-radius:5px;}
+td{border-bottom:1px solid #ccc;padding:8px}
 .hidden{display:none}
+#botThinking{font-size:14px;color:#ffd700;margin:5px;font-style:italic;}
+#raiseControl{margin:15px 0;}
+#streetInfo{font-size:16px;margin:10px;color:#ffd700;}
 </style>
 </head>
 
@@ -76,11 +84,14 @@ Pot <span id="pot"></span> $ |
 Score <span id="score"></span> $
 </div>
 
+<div id="streetInfo"></div>
+
 <div class="cards" id="player"></div>
 <div class="cards" id="board"></div>
 <div class="cards" id="bot"></div>
+<div id="botThinking"></div>
 
-<div>
+<div id="raiseControl">
 Raise:
 <button onclick="chg(-500)">&minus;</button>
 <span id="raise">1000</span>
@@ -144,6 +155,197 @@ function ren(c){
 return c.map(x=>`<span style="color:${x.s.c}">${x.r}${x.s.s}</span>`).join(" ");
 }
 
+/* BOT ESTREMAMENTE AGGRESSIVO E CONVINTO */
+class UltraAggressiveBot {
+    constructor() {
+        this.preflopAggression = 2.2;
+        this.postflopAggression = 1.8;
+        this.bluffFrequency = 0.15;
+        this.commitmentLevel = 0;
+    }
+
+    evaluatePreflopHand(botCards) {
+        const [c1, c2] = botCards;
+        const rank1 = R.indexOf(c1.r);
+        const rank2 = R.indexOf(c2.r);
+        const highRank = Math.max(rank1, rank2);
+        const lowRank = Math.min(rank1, rank2);
+        const suited = c1.s.s === c2.s.s;
+        const isPair = c1.r === c2.r;
+        const gap = Math.abs(rank1 - rank2);
+        
+        let strength = 0.3;
+        
+        if (isPair) {
+            strength = 0.85 + (highRank * 0.015);
+            if (highRank >= 6) strength = 0.9;
+            if (highRank >= 8) strength = 0.95;
+            if (highRank >= 10) strength = 0.98;
+        }
+        else if (c1.r === 'A' || c2.r === 'A') {
+            const otherCard = c1.r === 'A' ? c2.r : c1.r;
+            const otherRank = R.indexOf(otherCard);
+            if (otherRank >= 8) {
+                strength = 0.9 + (otherRank - 8) * 0.03;
+            } else if (otherRank >= 5) {
+                strength = 0.75 + (otherRank - 5) * 0.04;
+            } else {
+                strength = 0.65;
+            }
+            if (suited) strength += 0.1;
+        }
+        else if (highRank >= 9) {
+            if (highRank >= 10 && lowRank >= 8) strength = 0.7;
+            else if (highRank >= 9 && lowRank >= 7) strength = 0.65;
+            else strength = 0.6;
+            if (suited) strength += 0.12;
+            if (gap <= 2) strength += 0.08;
+        }
+        else if (suited && gap <= 3) {
+            strength = 0.6 + (highRank * 0.01);
+        }
+        else if (highRank >= 7) {
+            strength = 0.55 + (highRank - 7) * 0.02;
+        }
+        else {
+            strength = 0.45 + (highRank * 0.01);
+            if (suited) strength += 0.05;
+            if (gap <= 2) strength += 0.05;
+        }
+        
+        return Math.min(strength, 0.99);
+    }
+
+    evaluatePostflopHand(botCards, boardCards, street) {
+        const allCards = [...botCards, ...boardCards];
+        if (allCards.length < 5) return 0.5;
+        
+        const handValue = evalHand(allCards);
+        const maxHandValue = 7462; // Il valore massimo possibile (Royal flush)
+        
+        let strength = handValue / maxHandValue;
+        
+        if (handValue >= 100) {
+            strength = Math.max(strength, 0.7);
+        }
+        
+        if (street >= 2 && this.commitmentLevel > 0) {
+            strength += this.commitmentLevel * 0.2;
+        }
+        
+        const drawPotential = this.evaluateDrawPotential(botCards, boardCards);
+        strength += drawPotential * 0.5;
+        
+        if (boardCards.length >= 3) {
+            const boardRanks = boardCards.map(c => R.indexOf(c.r));
+            const maxBoardRank = Math.max(...boardRanks);
+            if (maxBoardRank < 8) {
+                const botHasPair = this.hasPair(botCards, boardCards);
+                if (botHasPair) strength = Math.max(strength, 0.8);
+            }
+        }
+        
+        return Math.min(strength, 1.0);
+    }
+
+    hasPair(botCards, boardCards) {
+        const allRanks = [...botCards.map(c => c.r), ...boardCards.map(c => c.r)];
+        const rankCount = {};
+        allRanks.forEach(r => rankCount[r] = (rankCount[r] || 0) + 1);
+        return Object.values(rankCount).some(count => count >= 2);
+    }
+
+    evaluateDrawPotential(botCards, boardCards) {
+        let drawScore = 0;
+        const suits = {};
+        const ranks = [];
+        
+        [...botCards, ...boardCards].forEach(card => {
+            suits[card.s.s] = (suits[card.s.s] || 0) + 1;
+            ranks.push(R.indexOf(card.r));
+        });
+        
+        Object.values(suits).forEach(count => {
+            if (count === 4) drawScore += 0.7;
+            if (count === 3) drawScore += 0.4;
+        });
+        
+        ranks.sort((a, b) => a - b);
+        const uniqueRanks = [...new Set(ranks)];
+        
+        for (let i = 0; i < uniqueRanks.length - 3; i++) {
+            if (uniqueRanks[i+3] - uniqueRanks[i] <= 4) {
+                drawScore += 0.6;
+            }
+            else if (uniqueRanks[i+3] - uniqueRanks[i] <= 5) {
+                drawScore += 0.4;
+            }
+        }
+        
+        return Math.min(drawScore, 0.9);
+    }
+
+    decideAction(botCards, boardCards, potSize, betSize, currentStreet) {
+        document.getElementById("botThinking").innerText = "BOT sta pensando...";
+        
+        let handStrength;
+        const random = rng();
+        
+        if (currentStreet === 0) {
+            handStrength = this.evaluatePreflopHand(botCards);
+            this.commitmentLevel = handStrength;
+            
+            if (handStrength > 0.8) {
+                if (random < 0.95) return 'raise';
+                return 'call';
+            } else if (handStrength > 0.65) {
+                if (random < 0.85) return 'raise';
+                if (random < 0.95) return 'call';
+                return 'fold';
+            } else if (handStrength > 0.5) {
+                if (random < 0.7) return 'call';
+                if (random < 0.9) return 'raise';
+                return 'fold';
+            } else {
+                if (random < 0.8) return 'call';
+                if (random < 0.85) return 'raise';
+                return 'fold';
+            }
+        } else {
+            handStrength = this.evaluatePostflopHand(botCards, boardCards, currentStreet);
+            
+            if (currentStreet >= 2) {
+                this.commitmentLevel += 0.3;
+            }
+            
+            if (this.commitmentLevel > 0.5) {
+                handStrength += 0.2;
+            }
+            
+            if (handStrength > 0.8) {
+                if (random < 0.9) return 'raise';
+                return 'call';
+            } else if (handStrength > 0.6) {
+                if (random < 0.6) return 'raise';
+                if (random < 0.9) return 'call';
+                return 'fold';
+            } else if (handStrength > 0.4) {
+                if (random < 0.8) return 'call';
+                if (random < 0.9) return 'raise';
+                return 'fold';
+            } else if (handStrength > 0.25) {
+                if (random < 0.7) return 'call';
+                return 'fold';
+            } else {
+                if (random < 0.2) return 'call';
+                return 'fold';
+            }
+        }
+    }
+}
+
+const pokerBot = new UltraAggressiveBot();
+
 /* Start */
 function startTournament(){
 torneo=document.getElementById("tournament").value;
@@ -174,6 +376,20 @@ document.getElementById("player").innerHTML="Tue carte: "+ren(pc);
 document.getElementById("board").innerHTML="Board: "+ren(board);
 document.getElementById("bot").innerHTML=showBot?"BOT: "+ren(bc):"BOT: ? ?";
 document.getElementById("raise").innerText=raise;
+
+// Mostra info street
+let streetText = "";
+switch(street) {
+    case 0: streetText = "PREFLOP"; break;
+    case 1: streetText = "FLOP"; break;
+    case 2: streetText = "TURN"; break;
+    case 3: streetText = "RIVER"; break;
+}
+document.getElementById("streetInfo").innerText = streetText;
+
+if(!showBot) {
+    document.getElementById("botThinking").innerText = "";
+}
 }
 
 /* Raise */
@@ -184,48 +400,251 @@ if(raise>MAX_RAISE)raise=MAX_RAISE;
 update(false);
 }
 
-/* Azione */
-function act(t){
-if(t==="fold"){ score-=pot; finish("Hai foldato"); return; }
+/* Azione del giocatore - TUTTE LE STREET FUNZIONANTI */
+async function act(t){
+if(t==="fold"){
+    score-=pot;
+    finish("Hai foldato");
+    return;
+}
 
-// BOT decisione migliorata
-let equity = evalHand(bc.concat(board))/9;
-let cost = raise;
-let odds = cost/(pot+cost);
-let botFold = equity < odds * 0.8; // Cambiato da 0.9 a 0.8 per rendere il bot più aggressivo
+// Calcola la puntata
+const currentBet = (t === "raise") ? raise : 0;
 
-pot+=raise;
+// Azione del giocatore al pot
+if(t === "raise") {
+    pot += raise;
+} else if(t === "call") {
+    pot += BB;
+}
 
-if(botFold){
-    // Decisione del bot se foldare
-    if (Math.random() > 0.5) { // 50% di probabilità di foldare anche se ha una mano decente
-        score += pot;
-        finish("BOT folda");
-        return;
+// Decisione del bot
+const botAction = pokerBot.decideAction(bc, board, pot, currentBet, street);
+
+// Attendi per simulare pensiero
+await new Promise(resolve => setTimeout(resolve, 600));
+
+// Esegui azione del bot
+if(botAction === 'fold'){
+    score += pot;
+    finish("BOT folda");
+    return;
+} else if(botAction === 'call'){
+    pot += (t === "raise") ? raise : BB;
+    document.getElementById("botThinking").innerText = "BOT chiama";
+} else if(botAction === 'raise'){
+    const botRaise = Math.min(Math.floor(BB * (1.8 + rng() * 1.2)), MAX_RAISE);
+    pot += botRaise;
+    document.getElementById("botThinking").innerText = `BOT ralza a ${botRaise}$`;
+}
+
+// IMPORTANTE: DOPO CHE ENTRAMBI HANNO GIOCATO, VERIFICA SE ANDARE ALLA PROSSIMA STREET
+await afterActionProcessing();
+}
+
+/* Processo dopo ogni azione */
+async function afterActionProcessing() {
+    // Se siamo al river (street = 3), dopo che entrambi hanno giocato, facciamo showdown
+    if (street === 3) {
+        // Siamo al river e entrambi hanno giocato
+        await new Promise(resolve => setTimeout(resolve, 800));
+        showdown();
+    } else {
+        // Non siamo al river, passiamo alla prossima street
+        street++;
+        
+        // Aggiungi carte al board in base alla street
+        if (street === 1) {
+            // Flop: 3 carte
+            board.push(draw(), draw(), draw());
+        } else if (street === 2) {
+            // Turn: 1 carta
+            board.push(draw());
+        } else if (street === 3) {
+            // River: 1 carta
+            board.push(draw());
+        }
+        
+        // Aggiorna l'interfaccia
+        await new Promise(resolve => setTimeout(resolve, 500));
+        update(false);
     }
 }
 
-if(street<3){
-street++;
-if(street===1) board.push(draw(),draw(),draw());
-else board.push(draw());
-update(false);
-} else showdown();
+/* EVALHAND COMPLETAMENTE RISCITTA E CORRETTA */
+function evalHand(cards) {
+    if (cards.length < 5) return 0;
+    
+    // Converti carte in valori numerici
+    const values = cards.map(c => R.indexOf(c.r)).sort((a, b) => b - a);
+    const suits = cards.map(c => c.s.s);
+    
+    // Conta occorrenze di ogni valore
+    const valueCounts = {};
+    values.forEach(v => valueCounts[v] = (valueCounts[v] || 0) + 1);
+    
+    // Conta occorrenze di ogni seme
+    const suitCounts = {};
+    suits.forEach(s => suitCounts[s] = (suitCounts[s] || 0) + 1);
+    
+    // Ordina valori per frequenza e poi per rank
+    const sortedValues = Object.entries(valueCounts)
+        .sort((a, b) => b[1] - a[1] || b[0] - a[0])
+        .map(entry => parseInt(entry[0]));
+    
+    // Controlla flush
+    const flush = Object.values(suitCounts).some(count => count >= 5);
+    
+    // Controlla straight
+    let straight = false;
+    let straightHighCard = 0;
+    const uniqueValues = [...new Set(values)].sort((a, b) => b - a);
+    
+    // Controlla straight normale
+    for (let i = 0; i <= uniqueValues.length - 5; i++) {
+        if (uniqueValues[i] - uniqueValues[i + 4] === 4) {
+            straight = true;
+            straightHighCard = uniqueValues[i];
+            break;
+        }
+    }
+    
+    // Controlla straight con Asso basso (A,2,3,4,5)
+    if (!straight && uniqueValues.includes(12)) { // 12 = Asso
+        const lowStraightValues = [12, 0, 1, 2, 3]; // A,2,3,4,5
+        if (lowStraightValues.every(v => uniqueValues.includes(v))) {
+            straight = true;
+            straightHighCard = 3; // 5 è la carta alta in questa straight
+        }
+    }
+    
+    // Determinazione della mano
+    const isFourOfAKind = Object.values(valueCounts).includes(4);
+    const isFullHouse = Object.values(valueCounts).includes(3) && Object.values(valueCounts).includes(2);
+    const isThreeOfAKind = Object.values(valueCounts).includes(3);
+    const pairs = Object.values(valueCounts).filter(count => count === 2).length;
+    const isTwoPair = pairs >= 2;
+    const isOnePair = pairs === 1;
+    
+    // Calcola il valore della mano (più alto = migliore)
+    let handValue = 0;
+    
+    // Royal flush o Straight flush
+    if (straight && flush) {
+        handValue = 8000000 + straightHighCard * 10000;
+        // Royal flush è il massimo
+        if (straightHighCard === 12 && uniqueValues.includes(11) && uniqueValues.includes(10)) {
+            handValue = 9000000;
+        }
+        return handValue;
+    }
+    
+    // Poker
+    if (isFourOfAKind) {
+        const fourRank = parseInt(Object.entries(valueCounts).find(([_, count]) => count === 4)[0]);
+        const kicker = Math.max(...values.filter(v => v !== fourRank));
+        handValue = 7000000 + fourRank * 10000 + kicker;
+        return handValue;
+    }
+    
+    // Full house
+    if (isFullHouse) {
+        const threeRank = parseInt(Object.entries(valueCounts).find(([_, count]) => count === 3)[0]);
+        const twoRank = parseInt(Object.entries(valueCounts).find(([_, count]) => count === 2)[0]);
+        handValue = 6000000 + threeRank * 10000 + twoRank * 100;
+        return handValue;
+    }
+    
+    // Flush
+    if (flush) {
+        // Prendi le 5 carte più alte dello stesso seme
+        const flushCards = cards.filter(c => suitCounts[c.s.s] >= 5);
+        const flushValues = flushCards.map(c => R.indexOf(c.r)).sort((a, b) => b - a).slice(0, 5);
+        handValue = 5000000 + flushValues.reduce((acc, val, idx) => acc + val * Math.pow(14, 4 - idx), 0);
+        return handValue;
+    }
+    
+    // Straight
+    if (straight) {
+        handValue = 4000000 + straightHighCard * 10000;
+        return handValue;
+    }
+    
+    // Tris
+    if (isThreeOfAKind) {
+        const threeRank = parseInt(Object.entries(valueCounts).find(([_, count]) => count === 3)[0]);
+        const kickers = values.filter(v => v !== threeRank).sort((a, b) => b - a).slice(0, 2);
+        handValue = 3000000 + threeRank * 10000 + kickers[0] * 100 + kickers[1];
+        return handValue;
+    }
+    
+    // Doppia coppia
+    if (isTwoPair) {
+        const pairRanks = Object.entries(valueCounts)
+            .filter(([_, count]) => count === 2)
+            .map(([rank, _]) => parseInt(rank))
+            .sort((a, b) => b - a)
+            .slice(0, 2);
+        const kicker = Math.max(...values.filter(v => !pairRanks.includes(v)));
+        handValue = 2000000 + pairRanks[0] * 10000 + pairRanks[1] * 100 + kicker;
+        return handValue;
+    }
+    
+    // Coppia
+    if (isOnePair) {
+        const pairRank = parseInt(Object.entries(valueCounts).find(([_, count]) => count === 2)[0]);
+        const kickers = values.filter(v => v !== pairRank).sort((a, b) => b - a).slice(0, 3);
+        handValue = 1000000 + pairRank * 10000 + kickers[0] * 100 + kickers[1] * 10 + kickers[2];
+        return handValue;
+    }
+    
+    // Carta alta
+    const highCards = values.slice(0, 5);
+    handValue = highCards.reduce((acc, val, idx) => acc + val * Math.pow(14, 4 - idx), 0);
+    return handValue;
 }
 
-/* Showdown */
+/* Nome della mano */
+function getHandName(handValue) {
+    if (handValue >= 9000000) return "Royal Flush";
+    if (handValue >= 8000000) return "Straight Flush";
+    if (handValue >= 7000000) return "Poker";
+    if (handValue >= 6000000) return "Full House";
+    if (handValue >= 5000000) return "Flush";
+    if (handValue >= 4000000) return "Straight";
+    if (handValue >= 3000000) return "Tris";
+    if (handValue >= 2000000) return "Doppia Coppia";
+    if (handValue >= 1000000) return "Coppia";
+    return "Carta Alta";
+}
+
+/* Showdown - CORRETTO */
 function showdown(){
 let p=evalHand(pc.concat(board));
 let b=evalHand(bc.concat(board));
-if(p>b){ score+=pot; finish("Hai vinto"); }
-else{ score-=pot; finish("BOT vince"); }
+if(p>b){
+    // Giocatore vince
+    score += pot;
+    finish("Hai vinto! (" + getHandName(p) + ")");
+} else if(b>p){
+    // Bot vince
+    score -= pot;
+    finish("BOT vince! (" + getHandName(b) + ")");
+} else {
+    // Pareggio - vero split pot
+    finish("Split pot - pareggio! (" + getHandName(p) + ")");
+}
 }
 
 /* Fine mano */
 function finish(m){
 update(true);
 document.getElementById("msg").innerText=m;
-setTimeout(()=>{document.getElementById("msg").innerText=""; newHand();},1800);
+setTimeout(()=>{
+    document.getElementById("msg").innerText="";
+    document.getElementById("botThinking").innerText="";
+    newHand();
+}, 2000);
 }
 
 /* Fine torneo */
@@ -238,6 +657,7 @@ document.getElementById("finalScore").innerText=score;
 /* Leaderboard */
 function saveScore(){
 let nick=document.getElementById("nickname").value||"Anonimo";
+if(nick.length > 15) nick = nick.substring(0, 15);
 let lb=JSON.parse(localStorage.getItem(torneo)||"[]");
 lb.push({nick,score});
 lb.sort((a,b)=>b.score-a.score);
@@ -247,45 +667,23 @@ document.getElementById("home").classList.remove("hidden");
 loadLeaderboards();
 }
 
-/* Eval mano completa */
-function evalHand(cards){
-let ranks=cards.map(c=>R.indexOf(c.r)).sort((a,b)=>b-a);
-let suits=cards.map(c=>c.s.s);
-let counts={};
-ranks.forEach(r=>counts[r]=(counts[r]||0)+1);
-let groups=Object.values(counts).sort((a,b)=>b-a).join("");
-
-let flush = suits.some(s=>suits.filter(x=>x===s).length>=5);
-let uniq=[...new Set(ranks)];
-if(uniq.includes(12)) uniq.push(-1);
-uniq.sort((a,b)=>b-a);
-let straight=false;
-for(let i=0;i<uniq.length-4;i++)
-if(uniq[i]-uniq[i+4]===4) straight=true;
-
-if(straight && flush) return 9;
-if(groups==="41") return 8;
-if(groups==="32") return 7;
-if(flush) return 6;
-if(straight) return 5;
-if(groups==="311") return 4;
-if(groups==="221") return 3;
-if(groups==="2111") return 2;
-return 1;
-}
-
 /* Load leaderboard */
 function loadLeaderboards(){
 let d=document.getElementById("leaderboards");
 d.innerHTML="";
 TOURNAMENTS.forEach(t=>{
 let lb=JSON.parse(localStorage.getItem(t)||"[]");
+if(lb.length === 0) return;
 let h=`<h4>${t}</h4><table>`;
-lb.forEach(e=>h+=`<tr><td>${e.nick}</td><td>${e.score}</td></tr>`);
+lb.forEach((e,i)=>{
+    h+=`<tr><td>${i+1}. ${e.nick}</td><td>${e.score} $</td></tr>`;
+});
 h+="</table>";
 d.innerHTML+=h;
 });
 }
+
+// Inizializza
 loadLeaderboards();
 </script>
 
