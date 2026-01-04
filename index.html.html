@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOLUCK POKER</title>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600&family=Montserrat:wght@400;600&display=swap');
+
+body{
+margin:0;
+font-family:'Montserrat',sans-serif;
+background:#2aa876;
+color:white;
+text-align:center;
+}
+
+header{
+background:#145a32;
+padding:10px;
+font-size:14px;
+}
+
+h1{
+font-family:'Cinzel',serif;
+font-size:40px;
+margin:10px 0 0;
+}
+
+.subtitle{font-size:14px;opacity:.85;margin-bottom:12px}
+.container{padding:12px}
+button{
+padding:12px 18px;
+margin:6px;
+font-size:18px;
+border:none;
+border-radius:6px;
+background:#d4af37;
+color:#222;
+}
+.cards{font-size:28px;margin:8px}
+.score{font-size:20px;margin:8px}
+table{width:100%;border-collapse:collapse}
+td{border-bottom:1px solid #ccc;padding:6px}
+.hidden{display:none}
+</style>
+</head>
+
+<body>
+
+<header>&copy; 2026 Giovanni Cerbai – Tutti i diritti riservati</header>
+
+<div class="container" id="home">
+<h1>NOLUCK POKER</h1>
+<div class="subtitle">Duplicate Holdem Heads-Up Poker</div>
+
+<select id="tournament">
+<option>Leone</option>
+<option>Tigre</option>
+<option>Aquila</option>
+<option>Lupo</option>
+<option>Squalo</option>
+<option>Pantera</option>
+</select><br>
+<button onclick="startTournament()">Entra nel torneo</button>
+
+<h3>Leaderboard tornei</h3>
+<div id="leaderboards"></div>
+</div>
+
+<div class="container hidden" id="game">
+<div class="score">
+Mano <span id="hand"></span>/20 |
+Pot <span id="pot"></span> $ |
+Score <span id="score"></span> $
+</div>
+
+<div class="cards" id="player"></div>
+<div class="cards" id="board"></div>
+<div class="cards" id="bot"></div>
+
+<div>
+Raise:
+<button onclick="chg(-500)">&minus;</button>
+<span id="raise">1000</span>
+<button onclick="chg(500)">+</button>
+<div style="font-size:14px">(min 1000 – max 5000)</div>
+</div>
+
+<button onclick="act('fold')">Fold</button>
+<button onclick="act('call')">Call</button>
+<button onclick="act('raise')">Raise</button>
+
+<h2 id="msg"></h2>
+</div>
+
+<div class="container hidden" id="end">
+<h2>Torneo completato</h2>
+<p>Punteggio finale: <b><span id="finalScore"></span> $</b></p>
+<input id="nickname" placeholder="Nickname">
+<br>
+<button onclick="saveScore()">Salva risultato</button>
+</div>
+
+<script>
+/* CONFIG */
+const SB=500, BB=1000, MAX_RAISE=5000;
+const R="23456789TJQKA".split("");
+const S=[
+{s:"&spades;",c:"black"},
+{s:"&hearts;",c:"red"},
+{s:"&diams;",c:"red"},
+{s:"&clubs;",c:"black"}
+];
+const TOURNAMENTS=["Leone","Tigre","Aquila","Lupo","Squalo","Pantera"];
+
+let rng, torneo, hand, score, raise, pot, street;
+let deck, pc, bc, board;
+
+/* RNG per torneo */
+function seedFromString(str){
+let h=0; for(let c of str) h=(h<<5)-h+c.charCodeAt(0);
+return Math.abs(h);
+}
+function mulberry32(a){
+return function(){
+let t=a+=0x6D2B79F5;
+t=Math.imul(t^t>>>15,t|1);
+t^=t+Math.imul(t^t>>>7,t|61);
+return((t^t>>>14)>>>0)/4294967296;
+};
+}
+
+/* Deck */
+function buildDeck(){
+deck=[];
+for(let r of R)for(let s of S)deck.push({r,s});
+}
+function draw(){
+return deck.splice(Math.floor(rng()*deck.length),1)[0];
+}
+function ren(c){
+return c.map(x=>`<span style="color:${x.s.c}">${x.r}${x.s.s}</span>`).join(" ");
+}
+
+/* Start */
+function startTournament(){
+torneo=document.getElementById("tournament").value;
+rng=mulberry32(seedFromString(torneo));
+hand=0; score=0;
+document.getElementById("home").classList.add("hidden");
+document.getElementById("game").classList.remove("hidden");
+newHand();
+}
+
+/* Mano */
+function newHand(){
+if(hand===20){ endTournament(); return; }
+hand++; street=0; raise=BB; pot=SB+BB;
+buildDeck();
+pc=[draw(),draw()];
+bc=[draw(),draw()];
+board=[];
+update(false);
+}
+
+/* UI */
+function update(showBot){
+document.getElementById("hand").innerText=hand;
+document.getElementById("pot").innerText=pot;
+document.getElementById("score").innerText=score;
+document.getElementById("player").innerHTML="Tue carte: "+ren(pc);
+document.getElementById("board").innerHTML="Board: "+ren(board);
+document.getElementById("bot").innerHTML=showBot?"BOT: "+ren(bc):"BOT: ? ?";
+document.getElementById("raise").innerText=raise;
+}
+
+/* Raise */
+function chg(v){
+raise+=v;
+if(raise<BB)raise=BB;
+if(raise>MAX_RAISE)raise=MAX_RAISE;
+update(false);
+}
+
+/* Azione */
+function act(t){
+if(t==="fold"){ score-=pot; finish("Hai foldato"); return; }
+
+// BOT decisione migliorata
+let equity = evalHand(bc.concat(board))/9;
+let cost = raise;
+let odds = cost/(pot+cost);
+let botFold = equity < odds * 0.8; // Cambiato da 0.9 a 0.8 per rendere il bot più aggressivo
+
+pot+=raise;
+
+if(botFold){
+    // Decisione del bot se foldare
+    if (Math.random() > 0.5) { // 50% di probabilità di foldare anche se ha una mano decente
+        score += pot;
+        finish("BOT folda");
+        return;
+    }
+}
+
+if(street<3){
+street++;
+if(street===1) board.push(draw(),draw(),draw());
+else board.push(draw());
+update(false);
+} else showdown();
+}
+
+/* Showdown */
+function showdown(){
+let p=evalHand(pc.concat(board));
+let b=evalHand(bc.concat(board));
+if(p>b){ score+=pot; finish("Hai vinto"); }
+else{ score-=pot; finish("BOT vince"); }
+}
+
+/* Fine mano */
+function finish(m){
+update(true);
+document.getElementById("msg").innerText=m;
+setTimeout(()=>{document.getElementById("msg").innerText=""; newHand();},1800);
+}
+
+/* Fine torneo */
+function endTournament(){
+document.getElementById("game").classList.add("hidden");
+document.getElementById("end").classList.remove("hidden");
+document.getElementById("finalScore").innerText=score;
+}
+
+/* Leaderboard */
+function saveScore(){
+let nick=document.getElementById("nickname").value||"Anonimo";
+let lb=JSON.parse(localStorage.getItem(torneo)||"[]");
+lb.push({nick,score});
+lb.sort((a,b)=>b.score-a.score);
+localStorage.setItem(torneo,JSON.stringify(lb.slice(0,10)));
+document.getElementById("end").classList.add("hidden");
+document.getElementById("home").classList.remove("hidden");
+loadLeaderboards();
+}
+
+/* Eval mano completa */
+function evalHand(cards){
+let ranks=cards.map(c=>R.indexOf(c.r)).sort((a,b)=>b-a);
+let suits=cards.map(c=>c.s.s);
+let counts={};
+ranks.forEach(r=>counts[r]=(counts[r]||0)+1);
+let groups=Object.values(counts).sort((a,b)=>b-a).join("");
+
+let flush = suits.some(s=>suits.filter(x=>x===s).length>=5);
+let uniq=[...new Set(ranks)];
+if(uniq.includes(12)) uniq.push(-1);
+uniq.sort((a,b)=>b-a);
+let straight=false;
+for(let i=0;i<uniq.length-4;i++)
+if(uniq[i]-uniq[i+4]===4) straight=true;
+
+if(straight && flush) return 9;
+if(groups==="41") return 8;
+if(groups==="32") return 7;
+if(flush) return 6;
+if(straight) return 5;
+if(groups==="311") return 4;
+if(groups==="221") return 3;
+if(groups==="2111") return 2;
+return 1;
+}
+
+/* Load leaderboard */
+function loadLeaderboards(){
+let d=document.getElementById("leaderboards");
+d.innerHTML="";
+TOURNAMENTS.forEach(t=>{
+let lb=JSON.parse(localStorage.getItem(t)||"[]");
+let h=`<h4>${t}</h4><table>`;
+lb.forEach(e=>h+=`<tr><td>${e.nick}</td><td>${e.score}</td></tr>`);
+h+="</table>";
+d.innerHTML+=h;
+});
+}
+loadLeaderboards();
+</script>
+
+</body>
+</html>
